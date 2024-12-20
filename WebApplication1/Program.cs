@@ -6,7 +6,8 @@ Console.WriteLine("Hello Managed code!");
 
 unsafe
 {
-    NativeMethods.RegisterCallbacksManual(&RequestHandler);
+    var handler = new RequestHandler();
+    NativeMethods.RegisterCallbacksManual(&RequestHandler.OnExecuteRequest, &RequestHandler.OnAsyncCompletion, (IntPtr)GCHandle.Alloc(handler));
 }
 
 // Wait for ctrl + C or some other signal
@@ -14,15 +15,28 @@ var tcs = new TaskCompletionSource();
 PosixSignalRegistration.Create(PosixSignal.SIGTERM, x => tcs.TrySetResult());
 await tcs.Task;
 
-[UnmanagedCallersOnly]
-static unsafe int RequestHandler(IntPtr context, IntPtr _)
+class RequestHandler
 {
-    var httpContext = (IHttpContext*)context;
+    [UnmanagedCallersOnly]
+    public static unsafe int OnExecuteRequest(IntPtr context, IntPtr pHttpContext, IntPtr pProvider)
+    {
+        return (int)((RequestHandler)GCHandle.FromIntPtr(context).Target!).OnExecuteRequest(pHttpContext, pProvider);
+    }
 
-    var pResponse = httpContext->GetResponse();
+    [UnmanagedCallersOnly]
+    public static unsafe int OnAsyncCompletion(IntPtr context, IntPtr pHttpContext, uint dwNotification, int fPostNotification, IntPtr pProvider, IntPtr pCompletionInfo)
+    {
+        return (int)((RequestHandler)GCHandle.FromIntPtr(context).Target!).OnAsyncCompletion(pHttpContext, dwNotification, fPostNotification, pProvider, pCompletionInfo);
+    }
 
-    var body =
-            """
+    public unsafe REQUEST_NOTIFICATION_STATUS OnExecuteRequest(IntPtr pHttpContext, IntPtr pProvider)
+    {
+        var httpContext = (IHttpContext*)pHttpContext;
+
+        var pResponse = httpContext->GetResponse();
+
+        var body =
+                """
             <html>
                <head>
                 <title>Welcome to .NET!</title>
@@ -33,17 +47,24 @@ static unsafe int RequestHandler(IntPtr context, IntPtr _)
             </html>
             """u8;
 
-    HTTP_DATA_CHUNK chunk = default;
-    chunk.DataChunkType = HTTP_DATA_CHUNK_TYPE.HttpDataChunkFromMemory;
+        HTTP_DATA_CHUNK chunk = default;
+        chunk.DataChunkType = HTTP_DATA_CHUNK_TYPE.HttpDataChunkFromMemory;
 
-    fixed (byte* pBody = body)
-    {
-        chunk.FromMemory.pBuffer = pBody;
-        chunk.FromMemory.BufferLength = (uint)body.Length;
+        fixed (byte* pBody = body)
+        {
+            chunk.FromMemory.pBuffer = pBody;
+            chunk.FromMemory.BufferLength = (uint)body.Length;
 
-        uint bytesSent;
-        pResponse->WriteEntityChunks(&chunk, 1, fAsync: false, fMoreData: false, &bytesSent);
+            uint bytesSent;
+            pResponse->WriteEntityChunks(&chunk, 1, fAsync: false, fMoreData: false, &bytesSent);
+        }
+
+        return REQUEST_NOTIFICATION_STATUS.RQ_NOTIFICATION_CONTINUE;
     }
 
-    return (int)REQUEST_NOTIFICATION_STATUS.RQ_NOTIFICATION_CONTINUE;
+
+    public REQUEST_NOTIFICATION_STATUS OnAsyncCompletion(nint pHttpContext, uint dwNotification, int fPostNotification, nint pProvider, nint pCompletionInfo)
+    {
+        return REQUEST_NOTIFICATION_STATUS.RQ_NOTIFICATION_CONTINUE;
+    }
 }

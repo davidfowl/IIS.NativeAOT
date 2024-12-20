@@ -318,7 +318,7 @@ internal unsafe struct HttpModuleImpl : CHttpModule.Interface
     {
         var instance = CLRHost.GetOrCreate();
 
-        return (REQUEST_NOTIFICATION_STATUS)instance.RequestCallback((nint)pHttpContext, (nint)pProvider);
+        return instance.OnExecuteRequestHandler(pHttpContext, pProvider);
     }
 
     public REQUEST_NOTIFICATION_STATUS OnPostExecuteRequestHandler(IHttpContext* pHttpContext, IHttpEventProvider* pProvider)
@@ -388,7 +388,9 @@ internal unsafe struct HttpModuleImpl : CHttpModule.Interface
 
     public REQUEST_NOTIFICATION_STATUS OnAsyncCompletion(IHttpContext* pHttpContext, uint dwNotification, BOOL fPostNotification, IHttpEventProvider* pProvider, IHttpCompletionInfo* pCompletionInfo)
     {
-        return REQUEST_NOTIFICATION_STATUS.RQ_NOTIFICATION_CONTINUE;
+        var instance = CLRHost.GetOrCreate();
+
+        return instance.OnAsyncCompletion(pHttpContext, dwNotification, fPostNotification, pProvider, pCompletionInfo);
     }
     public void Dispose()
     {

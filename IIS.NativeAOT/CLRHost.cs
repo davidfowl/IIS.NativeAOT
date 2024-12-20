@@ -12,11 +12,37 @@ internal unsafe class CLRHost
     private static CLRHost s_instance;
 
     // Instance state
-    public delegate* unmanaged<IntPtr, IntPtr, int> RequestCallback = &ErrorPage;
+    private delegate* unmanaged<IntPtr, IntPtr, IntPtr, int> RequestCallback = &ErrorPage;
+    private delegate* unmanaged<IntPtr, IntPtr, uint, int, IntPtr, IntPtr, int> AsyncCallback;
+    private IntPtr Context;
+
     private int _returnCode;
     private readonly ManualResetEventSlim _wh = new();
 
-    internal static void RegisterCallbacks(delegate* unmanaged<IntPtr, IntPtr, int> requestCallback)
+    public REQUEST_NOTIFICATION_STATUS OnExecuteRequestHandler(IHttpContext* pHttpContext, IHttpEventProvider* pProvider)
+    {
+        if (RequestCallback is null)
+        {
+            throw new InvalidOperationException("RequestCallback not set");
+        }
+
+        return (REQUEST_NOTIFICATION_STATUS)RequestCallback(Context, (IntPtr)pHttpContext, (IntPtr)pProvider);
+    }
+
+    public REQUEST_NOTIFICATION_STATUS OnAsyncCompletion(IHttpContext* pHttpContext, uint dwNotification, BOOL fPostNotification, IHttpEventProvider* pProvider, IHttpCompletionInfo* pCompletionInfo)
+    {
+        if (AsyncCallback is null)
+        {
+            throw new InvalidOperationException("AsyncCallback not set");
+        }
+
+        return (REQUEST_NOTIFICATION_STATUS)AsyncCallback(Context, (IntPtr)pHttpContext, dwNotification, (int)fPostNotification, (IntPtr)pProvider, (IntPtr)pCompletionInfo);
+    }
+
+    internal static void RegisterCallbacks(
+        delegate* unmanaged<IntPtr, IntPtr, IntPtr, int> requestCallback, 
+        delegate* unmanaged<IntPtr, IntPtr, uint, int, IntPtr, IntPtr, int> asyncCallback,
+        IntPtr pContext)
     {
         if (s_instance is null)
         {
@@ -24,11 +50,13 @@ internal unsafe class CLRHost
         }
 
         s_instance.RequestCallback = requestCallback;
+        s_instance.AsyncCallback = asyncCallback;
+        s_instance.Context = pContext;
         s_instance._wh.Set();
     }
 
     [UnmanagedCallersOnly]
-    public unsafe static int ErrorPage(IntPtr pHttpContext, IntPtr pModuleInfo)
+    public unsafe static int ErrorPage(IntPtr _, IntPtr pHttpContext, IntPtr pModuleInfo)
     {
         var httpContext = (IHttpContext*)pHttpContext;
         var pResponse = httpContext->GetResponse();
