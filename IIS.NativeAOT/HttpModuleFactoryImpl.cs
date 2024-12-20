@@ -14,7 +14,7 @@ internal unsafe struct HttpModuleFactoryImpl : IHttpModuleFactory.Interface
 
     private static IHttpModuleFactory.Vtbl<HttpModuleFactoryImpl>* InitVtblInstance()
     {
-        IHttpModuleFactory.Vtbl<HttpModuleFactoryImpl>* lpVtbl = (IHttpModuleFactory.Vtbl<HttpModuleFactoryImpl>*)RuntimeHelpers.AllocateTypeAssociatedMemory(typeof(HttpModuleFactoryImpl), sizeof(IHttpModuleFactory.Vtbl<HttpModuleFactoryImpl>));
+        var lpVtbl = (IHttpModuleFactory.Vtbl<HttpModuleFactoryImpl>*)RuntimeHelpers.AllocateTypeAssociatedMemory(typeof(HttpModuleFactoryImpl), sizeof(IHttpModuleFactory.Vtbl<HttpModuleFactoryImpl>));
 
         lpVtbl->GetHttpModule = &GetHttpModule;
         lpVtbl->Terminate = &Terminate;
@@ -38,7 +38,7 @@ internal unsafe struct HttpModuleFactoryImpl : IHttpModuleFactory.Interface
 
     public static IHttpModuleFactory* Create()
     {
-        HttpModuleFactoryImpl* pHttpModuleFactory = (HttpModuleFactoryImpl*)NativeMemory.Alloc((uint)sizeof(HttpModuleFactoryImpl));
+        var pHttpModuleFactory = (HttpModuleFactoryImpl*)NativeMemory.Alloc((uint)sizeof(HttpModuleFactoryImpl));
         pHttpModuleFactory->lpVtbl = VtblInstance;
         return (IHttpModuleFactory*)pHttpModuleFactory;
     }

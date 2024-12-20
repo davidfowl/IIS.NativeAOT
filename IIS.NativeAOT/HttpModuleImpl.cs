@@ -14,9 +14,7 @@ internal unsafe struct HttpModuleImpl : CHttpModule.Interface
 
     private static CHttpModule.Vtbl<HttpModuleImpl>* InitVtblInstance()
     {
-        CHttpModule.Vtbl<HttpModuleImpl>* lpVtbl = (CHttpModule.Vtbl<HttpModuleImpl>*)RuntimeHelpers.AllocateTypeAssociatedMemory(typeof(HttpModuleImpl), sizeof(CHttpModule.Vtbl<HttpModuleImpl>));
-
-        // Implement the vtable here
+        var lpVtbl = (CHttpModule.Vtbl<HttpModuleImpl>*)RuntimeHelpers.AllocateTypeAssociatedMemory(typeof(HttpModuleImpl), sizeof(CHttpModule.Vtbl<HttpModuleImpl>));
 
         lpVtbl->Destructor = &Destructor;
         lpVtbl->Dispose = &Dispose;
@@ -54,7 +52,7 @@ internal unsafe struct HttpModuleImpl : CHttpModule.Interface
     }
     public static CHttpModule* Create(IModuleAllocator* pAllocator)
     {
-        HttpModuleImpl* pHttpModuleFactory = (HttpModuleImpl*)pAllocator->AllocateMemory((uint)sizeof(HttpModuleImpl));
+        var pHttpModuleFactory = (HttpModuleImpl*)pAllocator->AllocateMemory((uint)sizeof(HttpModuleImpl));
         pHttpModuleFactory->lpVtbl = VtblInstance;
         return (CHttpModule*)pHttpModuleFactory;
     }
