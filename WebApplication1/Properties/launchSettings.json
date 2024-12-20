@@ -5,10 +5,11 @@
       "commandName": "Executable",
       "executablePath": "C:\\Program Files\\IIS Express\\iisexpress.exe",
       "commandLineArgs": "/config:applicationhost.config /site:WebApplication1",
-      "launchBrowser": true,
+      "nativeDebugging": true,
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "PROJECT_DIR": "$(ProjectDir)",
+        "DOTNET_DLL": "$(TargetPath)",
         "AOT_BIN": "$(SolutionDir)\\IIS.NativeAOT\\bin\\Debug\\net9.0\\win-x64\\native"
       }
     }

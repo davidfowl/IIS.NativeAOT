@@ -316,24 +316,9 @@ internal unsafe struct HttpModuleImpl : CHttpModule.Interface
 
     public REQUEST_NOTIFICATION_STATUS OnExecuteRequestHandler(IHttpContext* pHttpContext, IHttpEventProvider* pProvider)
     {
-        Span<HTTP_DATA_CHUNK> chunks = stackalloc HTTP_DATA_CHUNK[1];
+        var instance = CLRHost.GetOrCreate();
 
-        ReadOnlySpan<byte> helloBytes = "Hello World From the Native Module!"u8;
-
-        fixed (byte* pHello = helloBytes)
-        {
-            chunks[0].DataChunkType = HTTP_DATA_CHUNK_TYPE.HttpDataChunkFromMemory;
-            chunks[0].FromMemory.pBuffer = pHello;
-            chunks[0].FromMemory.BufferLength = (uint)helloBytes.Length;
-
-            fixed (HTTP_DATA_CHUNK* pChunks = chunks)
-            {
-                uint bytesSent;
-                pHttpContext->GetResponse()->WriteEntityChunks(pChunks, 1, fAsync: false, fMoreData: false, &bytesSent);
-            }
-        }
-
-        return REQUEST_NOTIFICATION_STATUS.RQ_NOTIFICATION_CONTINUE;
+        return (REQUEST_NOTIFICATION_STATUS)instance.RequestCallback((nint)pHttpContext, (nint)pProvider);
     }
 
     public REQUEST_NOTIFICATION_STATUS OnPostExecuteRequestHandler(IHttpContext* pHttpContext, IHttpEventProvider* pProvider)
