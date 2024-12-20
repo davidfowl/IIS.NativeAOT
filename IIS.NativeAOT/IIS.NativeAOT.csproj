@@ -6,11 +6,15 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 	<PublishAot>true</PublishAot>
+	<SelfContained>true</SelfContained>
 	<IlcExportUnmanagedEntrypoints>true</IlcExportUnmanagedEntrypoints>
+	<RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="TerraFX.Interop.Windows" Version="10.0.26100.1-rc1.12422178050" />
   </ItemGroup>
+
+  <Target Name="RunAotBuild" AfterTargets="Build" DependsOnTargets="Publish" />
 
 </Project>

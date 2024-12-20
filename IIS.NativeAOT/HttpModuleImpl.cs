@@ -1,11 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
-using System.Text;
-using System.Threading.Tasks;
 using TerraFX.Interop.Windows;
 
 namespace IIS.NativeAOT;
@@ -323,6 +318,23 @@ internal unsafe struct HttpModuleImpl : CHttpModule.Interface
 
     public REQUEST_NOTIFICATION_STATUS OnExecuteRequestHandler(IHttpContext* pHttpContext, IHttpEventProvider* pProvider)
     {
+        Span<HTTP_DATA_CHUNK> chunks = stackalloc HTTP_DATA_CHUNK[1];
+
+        ReadOnlySpan<byte> helloBytes = "Hello World From the Native Module!"u8;
+
+        fixed (byte* pHello = helloBytes)
+        {
+            chunks[0].DataChunkType = HTTP_DATA_CHUNK_TYPE.HttpDataChunkFromMemory;
+            chunks[0].FromMemory.pBuffer = pHello;
+            chunks[0].FromMemory.BufferLength = (uint)helloBytes.Length;
+
+            fixed (HTTP_DATA_CHUNK* pChunks = chunks)
+            {
+                uint bytesSent;
+                pHttpContext->GetResponse()->WriteEntityChunks(pChunks, 1, fAsync: false, fMoreData: false, &bytesSent);
+            }
+        }
+
         return REQUEST_NOTIFICATION_STATUS.RQ_NOTIFICATION_CONTINUE;
     }
 

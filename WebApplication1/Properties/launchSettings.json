@@ -1,0 +1,16 @@
+﻿{
+  "$schema": "http://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "IIS Express": {
+      "commandName": "Executable",
+      "executablePath": "C:\\Program Files\\IIS Express\\iisexpress.exe",
+      "commandLineArgs": "/config:applicationhost.config /site:WebApplication1",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "PROJECT_DIR": "$(ProjectDir)",
+        "AOT_BIN": "$(SolutionDir)\\IIS.NativeAOT\\bin\\Debug\\net9.0\\win-x64\\native"
+      }
+    }
+  }
+}
