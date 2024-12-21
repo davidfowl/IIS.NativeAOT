@@ -15,6 +15,7 @@ internal unsafe class CLRHost
     private IntPtr Context;
 
     private int _returnCode;
+    private nint _hostContextHandle;
     private readonly ManualResetEventSlim _wh = new();
 
     public REQUEST_NOTIFICATION_STATUS OnExecuteRequestHandler(IHttpContext* pHttpContext, IHttpEventProvider* pProvider)
@@ -174,25 +175,30 @@ internal unsafe class CLRHost
                         return s_instance;
                     }
 
-                    s_initialized = true;
-                    s_instance = new CLRHost();
-
-                    var thread = new Thread(_ =>
+                    s_instance = new CLRHost
                     {
-                        int val = HostFxrImports.Run(host_context_handle);
-                        s_instance._returnCode = val;
+                        _hostContextHandle = host_context_handle
+                    };
+
+                    var thread = new Thread(static state =>
+                    {
+                        var host = (CLRHost)state!;
+                        int val = HostFxrImports.Run(host._hostContextHandle);
+                        host._returnCode = val;
                     })
                     {
                         IsBackground = true
                     };
 
-                    thread.Start();
+                    thread.Start(s_instance);
 
                     if (!s_instance._wh.Wait(TimeSpan.FromSeconds(5)))
                     {
                         s_instance = new CLRHost { _returnCode = -1 };
                         return s_instance;
                     }
+
+                    s_initialized = true;
 
                     return s_instance;
                 }
