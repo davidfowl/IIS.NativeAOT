@@ -7,7 +7,7 @@ Console.WriteLine("Hello Managed code!");
 unsafe
 {
     var handler = new RequestHandler();
-    NativeMethods.RegisterCallbacksManual(&RequestHandler.OnExecuteRequest, &RequestHandler.OnAsyncCompletion, (IntPtr)GCHandle.Alloc(handler));
+    NativeMethods.RegisterCallbacks(&RequestHandler.OnExecuteRequest, &RequestHandler.OnAsyncCompletion, (IntPtr)GCHandle.Alloc(handler));
 }
 
 // Wait for ctrl + C or some other signal
