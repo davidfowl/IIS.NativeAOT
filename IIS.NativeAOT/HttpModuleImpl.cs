@@ -51,6 +51,7 @@ internal unsafe struct HttpModuleImpl : CHttpModule.Interface
     public static CHttpModule* Create(IModuleAllocator* pAllocator)
     {
         var pHttpModuleFactory = (HttpModuleImpl*)pAllocator->AllocateMemory((uint)sizeof(HttpModuleImpl));
+        // REVIEW: This can return null
         pHttpModuleFactory->lpVtbl = VtblInstance;
         return (CHttpModule*)pHttpModuleFactory;
     }
