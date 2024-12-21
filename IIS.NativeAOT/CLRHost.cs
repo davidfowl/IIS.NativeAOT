@@ -4,7 +4,6 @@ using System.Runtime.Versioning;
 
 namespace IIS.NativeAOT;
 
-[SupportedOSPlatform("windows")]
 internal unsafe class CLRHost
 {
     private static readonly Lock s_lock = new();

@@ -1,11 +1,9 @@
 ﻿using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
 using TerraFX.Interop.Windows;
 
 namespace IIS.NativeAOT;
 
-[SupportedOSPlatform("windows")]
 internal unsafe struct HttpModuleImpl : CHttpModule.Interface
 {
     private CHttpModule.Vtbl<HttpModuleImpl>* lpVtbl;

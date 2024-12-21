@@ -4,7 +4,6 @@ using TerraFX.Interop.Windows;
 
 namespace IIS.NativeAOT;
 
-[SupportedOSPlatform("windows")]
 public static class IISNativeModule
 {
     [UnmanagedCallersOnly(EntryPoint = "RegisterModule")]

@@ -5,7 +5,6 @@ using TerraFX.Interop.Windows;
 
 namespace IIS.NativeAOT;
 
-[SupportedOSPlatform("windows")]
 internal unsafe struct HttpModuleFactoryImpl : IHttpModuleFactory.Interface
 {
     private IHttpModuleFactory.Vtbl<HttpModuleFactoryImpl>* lpVtbl;
