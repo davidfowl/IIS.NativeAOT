@@ -1,6 +1,5 @@
 ﻿using System.Runtime.InteropServices;
 using TerraFX.Interop.Windows;
-using System.Runtime.Versioning;
 
 namespace IIS.NativeAOT;
 
@@ -191,7 +190,6 @@ internal unsafe class CLRHost
 
                     if (!s_instance._wh.Wait(TimeSpan.FromSeconds(5)))
                     {
-                        Console.WriteLine("Timeout waiting for RegisterCallbacks");
                         s_instance = new CLRHost { _returnCode = -1 };
                         return s_instance;
                     }
