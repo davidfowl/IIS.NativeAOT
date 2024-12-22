@@ -315,9 +315,22 @@ internal unsafe struct HttpModuleImpl : CHttpModule.Interface
 
     public REQUEST_NOTIFICATION_STATUS OnExecuteRequestHandler(IHttpContext* pHttpContext, IHttpEventProvider* pProvider)
     {
-        var instance = CLRHost.GetOrCreate();
+        var instanceTask = CLRHost.GetOrCreateAsync();
 
-        return instance.OnExecuteRequestHandler(pHttpContext, pProvider);
+        if (instanceTask.IsCompleted)
+        {
+            return instanceTask.Result.OnExecuteRequestHandler(pHttpContext, pProvider);
+        }
+
+        instanceTask.AsTask().ContinueWith(t =>
+        {
+            var val = t.Result.OnExecuteRequestHandler(pHttpContext, pProvider);
+
+            pHttpContext->IndicateCompletion(val);
+        });
+
+
+        return REQUEST_NOTIFICATION_STATUS.RQ_NOTIFICATION_PENDING;
     }
 
     public REQUEST_NOTIFICATION_STATUS OnPostExecuteRequestHandler(IHttpContext* pHttpContext, IHttpEventProvider* pProvider)
@@ -387,9 +400,21 @@ internal unsafe struct HttpModuleImpl : CHttpModule.Interface
 
     public REQUEST_NOTIFICATION_STATUS OnAsyncCompletion(IHttpContext* pHttpContext, uint dwNotification, BOOL fPostNotification, IHttpEventProvider* pProvider, IHttpCompletionInfo* pCompletionInfo)
     {
-        var instance = CLRHost.GetOrCreate();
+        var instanceTask = CLRHost.GetOrCreateAsync();
 
-        return instance.OnAsyncCompletion(pHttpContext, dwNotification, fPostNotification, pProvider, pCompletionInfo);
+        if (instanceTask.IsCompleted)
+        {
+            return instanceTask.Result.OnAsyncCompletion(pHttpContext, dwNotification, fPostNotification, pProvider, pCompletionInfo);
+        }
+
+        instanceTask.AsTask().ContinueWith(t =>
+        {
+            var val = t.Result.OnAsyncCompletion(pHttpContext, dwNotification, fPostNotification, pProvider, pCompletionInfo);
+            
+            pHttpContext->IndicateCompletion(val);
+        });
+
+        return REQUEST_NOTIFICATION_STATUS.RQ_NOTIFICATION_PENDING;
     }
     public void Dispose()
     {

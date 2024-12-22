@@ -1,57 +1,69 @@
 ﻿using System.Runtime.InteropServices;
+using System.Text;
 using TerraFX.Interop.Windows;
 
 namespace IIS.NativeAOT;
 
-internal unsafe class CLRHost
+internal class CLRHost
 {
-    private static readonly Lock s_lock = new();
-    private static bool s_initialized = false;
-    private static CLRHost s_instance;
+    private static readonly SemaphoreSlim s_linitializationLock = new(1);
+    private static readonly CLRHost s_instance = new();
 
     // Instance state
-    private delegate* unmanaged<IntPtr, IntPtr, IntPtr, int> RequestCallback = &ErrorPage;
-    private delegate* unmanaged<IntPtr, IntPtr, uint, int, IntPtr, IntPtr, int> AsyncCallback;
-    private IntPtr Context;
+    unsafe class CallbakState
+    {
+        public delegate* unmanaged<IntPtr, IntPtr, IntPtr, int> RequestCallback = &ErrorPage;
+        public delegate* unmanaged<IntPtr, IntPtr, uint, int, IntPtr, IntPtr, int> AsyncCallback;
+        public IntPtr Context;
+    }
 
+    private bool _initialized;
     private int _returnCode;
+    private byte[] _error =
+            """
+            <html>
+               <head>
+                <title>Internal Server Error</title>
+               </head>
+               <body>
+               <h1>Internal Server Error</h1>
+               <p>Failed to initialize the .NET application.</p>
+               </body>
+            </html>
+            """u8.ToArray();
+
     private nint _hostContextHandle;
-    private readonly ManualResetEventSlim _wh = new();
+    private CallbakState _callbackState = new();
+    private readonly TaskCompletionSource _initializationTcs = new();
 
-    public REQUEST_NOTIFICATION_STATUS OnExecuteRequestHandler(IHttpContext* pHttpContext, IHttpEventProvider* pProvider)
+    public unsafe REQUEST_NOTIFICATION_STATUS OnExecuteRequestHandler(IHttpContext* pHttpContext, IHttpEventProvider* pProvider)
     {
-        if (RequestCallback is null)
-        {
-            throw new InvalidOperationException("RequestCallback not set");
-        }
-
-        return (REQUEST_NOTIFICATION_STATUS)RequestCallback(Context, (IntPtr)pHttpContext, (IntPtr)pProvider);
+        return (REQUEST_NOTIFICATION_STATUS)_callbackState.RequestCallback(_callbackState.Context, (IntPtr)pHttpContext, (IntPtr)pProvider);
     }
 
-    public REQUEST_NOTIFICATION_STATUS OnAsyncCompletion(IHttpContext* pHttpContext, uint dwNotification, BOOL fPostNotification, IHttpEventProvider* pProvider, IHttpCompletionInfo* pCompletionInfo)
+    public unsafe REQUEST_NOTIFICATION_STATUS OnAsyncCompletion(IHttpContext* pHttpContext, uint dwNotification, BOOL fPostNotification, IHttpEventProvider* pProvider, IHttpCompletionInfo* pCompletionInfo)
     {
-        if (AsyncCallback is null)
-        {
-            throw new InvalidOperationException("AsyncCallback not set");
-        }
-
-        return (REQUEST_NOTIFICATION_STATUS)AsyncCallback(Context, (IntPtr)pHttpContext, dwNotification, (int)fPostNotification, (IntPtr)pProvider, (IntPtr)pCompletionInfo);
+        return (REQUEST_NOTIFICATION_STATUS)_callbackState.AsyncCallback(_callbackState.Context, (IntPtr)pHttpContext, dwNotification, (int)fPostNotification, (IntPtr)pProvider, (IntPtr)pCompletionInfo);
     }
 
-    internal static void RegisterCallbacks(
-        delegate* unmanaged<IntPtr, IntPtr, IntPtr, int> requestCallback, 
+    internal unsafe static void RegisterCallbacks(
+        delegate* unmanaged<IntPtr, IntPtr, IntPtr, int> requestCallback,
         delegate* unmanaged<IntPtr, IntPtr, uint, int, IntPtr, IntPtr, int> asyncCallback,
         IntPtr pContext)
     {
-        if (s_instance is null)
+        if (!s_instance._initialized)
         {
             throw new InvalidOperationException("CLRHost not initialized");
         }
 
-        s_instance.RequestCallback = requestCallback;
-        s_instance.AsyncCallback = asyncCallback;
-        s_instance.Context = pContext;
-        s_instance._wh.Set();
+        s_instance._callbackState = new CallbakState
+        {
+            RequestCallback = requestCallback,
+            AsyncCallback = asyncCallback,
+            Context = pContext,
+        };
+
+        s_instance._initializationTcs.TrySetResult();
     }
 
     [UnmanagedCallersOnly]
@@ -73,26 +85,13 @@ internal unsafe class CLRHost
             pResponse->SetHeader((sbyte*)headerName, (sbyte*)headerValue, 9, fReplace: true);
         }
 
-        var body =
-            """
-            <html>
-               <head>
-                <title>Internal Server Error</title>
-               </head>
-               <body>
-               <h1>Internal Server Error</h1>
-               <p>Failed to initialize the .NET application.</p>
-               </body>
-            </html>
-            """u8;
-
         HTTP_DATA_CHUNK chunk = default;
         chunk.DataChunkType = HTTP_DATA_CHUNK_TYPE.HttpDataChunkFromMemory;
 
-        fixed (byte* pBody = body)
+        fixed (byte* pBody = s_instance._error)
         {
             chunk.FromMemory.pBuffer = pBody;
-            chunk.FromMemory.BufferLength = (uint)body.Length;
+            chunk.FromMemory.BufferLength = (uint)s_instance._error.Length;
 
             uint bytesSent;
             pResponse->WriteEntityChunks(&chunk, 1, fAsync: false, fMoreData: false, &bytesSent);
@@ -101,107 +100,121 @@ internal unsafe class CLRHost
         return (int)REQUEST_NOTIFICATION_STATUS.RQ_NOTIFICATION_FINISH_REQUEST;
     }
 
-    public static CLRHost GetOrCreate()
+    public static ValueTask<CLRHost> GetOrCreateAsync()
     {
-        lock (s_lock)
+        if (s_instance._initialized)
         {
-            if (s_initialized)
+            return ValueTask.FromResult(s_instance);
+        }
+
+        return Core();
+
+        async ValueTask<CLRHost> Core()
+        {
+            await s_linitializationLock.WaitAsync();
+
+            try
             {
-                return s_instance;
-            }
-
-            // See https://github.com/dotnet/runtime/blob/main/docs/design/features/native-hosting.md for more information on native hosting in .NET.
-
-            // TODO: Support other platforms
-
-            if (!OperatingSystem.IsWindows())
-            {
-                Console.WriteLine($"{RuntimeInformation.RuntimeIdentifier} is unsupported.");
-                s_instance = new CLRHost { _returnCode = 1 };
-                return s_instance;
-            }
-
-            // Uncomment to debug
-            // Environment.SetEnvironmentVariable("COREHOST_TRACE", "1");
-            // Environment.SetEnvironmentVariable("COREHOST_TRACE_VERBOSITY", "4");
-
-            var dotnetRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet");
-
-            var allHostFxrDirs = new DirectoryInfo(Path.Combine(dotnetRoot, "host\\fxr"));
-            var hostFxrDirectory = allHostFxrDirs.EnumerateDirectories().FirstOrDefault(d => d.Name.StartsWith("9.0"));
-
-            if (hostFxrDirectory is null)
-            {
-                Console.WriteLine($"Unable to find 9.0.x hostfxr: {string.Join(Environment.NewLine, allHostFxrDirs)}");
-                s_instance = new CLRHost { _returnCode = -1 };
-                return s_instance;
-            }
-
-            // Console.WriteLine($"Using hostfxr: {hostFxrDirectory}");
-
-            NativeLibrary.Load(Path.Combine(hostFxrDirectory.FullName, "hostfxr.dll"));
-
-            var dll = Environment.GetEnvironmentVariable("DOTNET_DLL");
-
-            if (string.IsNullOrEmpty(dll))
-            {
-                Console.WriteLine("DOTNET_DLL environment variable is not set.");
-                s_instance = new CLRHost { _returnCode = -1 };
-                return s_instance;
-            }
-
-            string[] args = [dll!];
-
-            unsafe
-            {
-                //var d = Path.GetDirectoryName(targetPath)!;
-
-                fixed (char* hostPathPointer = Environment.CurrentDirectory)
-                fixed (char* dotnetRootPointer = dotnetRoot)
+                if (s_instance._initialized)
                 {
-                    var parameters = new HostFxrImports.hostfxr_initialize_parameters
-                    {
-                        size = sizeof(HostFxrImports.hostfxr_initialize_parameters),
-                        host_path = hostPathPointer,
-                        dotnet_root = dotnetRootPointer
-                    };
-
-                    var err = HostFxrImports.Initialize(args.Length, args, ref parameters, out var host_context_handle);
-
-                    if (err < 0)
-                    {
-                        Console.WriteLine($"Error invoking initialize {err}");
-                        s_instance = new CLRHost { _returnCode = err };
-                        return s_instance;
-                    }
-
-                    s_instance = new CLRHost
-                    {
-                        _hostContextHandle = host_context_handle
-                    };
-
-                    var thread = new Thread(static state =>
-                    {
-                        var host = (CLRHost)state!;
-                        int val = HostFxrImports.Run(host._hostContextHandle);
-                        host._returnCode = val;
-                    })
-                    {
-                        IsBackground = true
-                    };
-
-                    thread.Start(s_instance);
-
-                    if (!s_instance._wh.Wait(TimeSpan.FromSeconds(5)))
-                    {
-                        s_instance = new CLRHost { _returnCode = -1 };
-                        return s_instance;
-                    }
-
-                    s_initialized = true;
-
                     return s_instance;
                 }
+
+                // See https://github.com/dotnet/runtime/blob/main/docs/design/features/native-hosting.md for more information on native hosting in .NET.
+
+                if (!OperatingSystem.IsWindows())
+                {
+                    s_instance._error = Encoding.UTF8.GetBytes($"{RuntimeInformation.RuntimeIdentifier} is unsupported.");
+                    s_instance._initialized = true;
+                    return s_instance;
+                }
+
+                // Uncomment to debug
+                // Environment.SetEnvironmentVariable("COREHOST_TRACE", "1");
+                // Environment.SetEnvironmentVariable("COREHOST_TRACE_VERBOSITY", "4");
+
+                // TODO: Look at the path
+                var dotnetRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet");
+
+                var allHostFxrDirs = new DirectoryInfo(Path.Combine(dotnetRoot, "host\\fxr"));
+                var hostFxrDirectory = allHostFxrDirs.EnumerateDirectories().FirstOrDefault(d => d.Name.StartsWith("9.0"));
+
+                if (hostFxrDirectory is null)
+                {
+                    s_instance._error = Encoding.UTF8.GetBytes($"Unable to find 9.0.x hostfxr: {string.Join(Environment.NewLine, allHostFxrDirs)}");
+                    s_instance._initialized = true;
+                    return s_instance;
+                }
+
+                // Console.WriteLine($"Using hostfxr: {hostFxrDirectory}");
+
+                NativeLibrary.Load(Path.Combine(hostFxrDirectory.FullName, "hostfxr.dll"));
+
+                var dll = Environment.GetEnvironmentVariable("DOTNET_DLL");
+
+                if (string.IsNullOrEmpty(dll))
+                {
+                    s_instance._error = "DOTNET_DLL environment variable is not set."u8.ToArray();
+                    s_instance._initialized = true;
+                    return s_instance;
+                }
+
+                string[] args = [dll!];
+
+                unsafe
+                {
+                    fixed (char* hostPathPointer = Environment.CurrentDirectory)
+                    fixed (char* dotnetRootPointer = dotnetRoot)
+                    {
+                        var parameters = new HostFxrImports.hostfxr_initialize_parameters
+                        {
+                            size = sizeof(HostFxrImports.hostfxr_initialize_parameters),
+                            host_path = hostPathPointer,
+                            dotnet_root = dotnetRootPointer
+                        };
+
+                        var err = HostFxrImports.Initialize(args.Length, args, ref parameters, out var host_context_handle);
+
+                        if (err < 0)
+                        {
+                            s_instance._returnCode = err;
+                            s_instance._error = Encoding.UTF8.GetBytes($"Error initializing hostfxr {err}");
+                            s_instance._initialized = true;
+                            return s_instance;
+                        }
+
+                        s_instance._hostContextHandle = host_context_handle;
+                        // Once we get the handle, we're initialized
+                        s_instance._initialized = true;
+
+                        var thread = new Thread(static state =>
+                        {
+                            var host = (CLRHost)state!;
+                            int val = HostFxrImports.Run(host._hostContextHandle);
+                            host._returnCode = val;
+                        })
+                        {
+                            IsBackground = true
+                        };
+
+                        thread.Start(s_instance);
+                    }
+                }
+
+                try
+                {
+                    await s_instance._initializationTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                catch (TimeoutException)
+                {
+                    // Timed out
+                }
+
+                return s_instance;
+            }
+            finally
+            {
+                s_linitializationLock.Release();
             }
         }
     }
