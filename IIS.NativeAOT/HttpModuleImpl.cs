@@ -329,7 +329,6 @@ internal unsafe struct HttpModuleImpl : CHttpModule.Interface
             pHttpContext->IndicateCompletion(val);
         });
 
-
         return REQUEST_NOTIFICATION_STATUS.RQ_NOTIFICATION_PENDING;
     }
 
