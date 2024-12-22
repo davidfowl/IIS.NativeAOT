@@ -25,7 +25,7 @@ internal class FxVer : IComparable<FxVer>
         var parts = version.Split('-', 2);
         var mainParts = parts[0].Split('.') switch
         {
-        [var major, var minor, var patch] => (major, minor, patch),
+            [var major, var minor, var patch] => (major, minor, patch),
             _ => throw new FormatException($"Invalid version format: {version}")
         };
 

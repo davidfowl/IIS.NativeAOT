@@ -234,30 +234,32 @@ internal class CLRHost
     private static string? GetDotnetRootPath()
     {
         // Check the DOTNET_ROOT environment variable
-        string? dotnetRootEnv = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        var dotnetRootEnv = Environment.GetEnvironmentVariable("DOTNET_ROOT");
         if (!string.IsNullOrEmpty(dotnetRootEnv) && Directory.Exists(dotnetRootEnv))
         {
             return dotnetRootEnv;
         }
 
         // Check the default installation path for .NET
-        string programFilesDotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet");
+        var programFilesDotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet");
         if (Directory.Exists(programFilesDotnet))
         {
             return programFilesDotnet;
         }
 
         // Search for dotnet.exe in the PATH environment variable
-        string? pathEnvironmentVariable = Environment.GetEnvironmentVariable("PATH");
-        if (pathEnvironmentVariable != null)
+        var pathEnvironmentVariable = Environment.GetEnvironmentVariable("PATH");
+        if (pathEnvironmentVariable is null)
         {
-            foreach (string path in pathEnvironmentVariable.Split(Path.PathSeparator))
+            return null;
+        }
+
+        foreach (string path in pathEnvironmentVariable.Split(Path.PathSeparator))
+        {
+            string potentialDotnetPath = Path.Combine(path, "dotnet");
+            if (File.Exists(Path.Combine(potentialDotnetPath, "dotnet.exe")))
             {
-                string potentialDotnetPath = Path.Combine(path, "dotnet");
-                if (File.Exists(Path.Combine(potentialDotnetPath, "dotnet.exe")))
-                {
-                    return potentialDotnetPath;
-                }
+                return potentialDotnetPath;
             }
         }
 
