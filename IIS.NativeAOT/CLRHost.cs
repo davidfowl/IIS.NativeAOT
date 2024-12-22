@@ -6,11 +6,9 @@ namespace IIS.NativeAOT;
 
 internal class CLRHost
 {
-    private static readonly SemaphoreSlim s_linitializationLock = new(1);
     private static readonly CLRHost s_instance = new();
 
-    // Instance state
-    unsafe class CallbakState
+    unsafe class CallbackState
     {
         public delegate* unmanaged<IntPtr, IntPtr, IntPtr, int> RequestCallback = &ErrorPage;
         public delegate* unmanaged<IntPtr, IntPtr, uint, int, IntPtr, IntPtr, int> AsyncCallback;
@@ -33,8 +31,9 @@ internal class CLRHost
             """u8.ToArray();
 
     private nint _hostContextHandle;
-    private CallbakState _callbackState = new();
+    private CallbackState _callbackState = new();
     private readonly TaskCompletionSource _initializationTcs = new();
+    private readonly SemaphoreSlim initLock = new(1);
 
     public unsafe REQUEST_NOTIFICATION_STATUS OnExecuteRequestHandler(IHttpContext* pHttpContext, IHttpEventProvider* pProvider)
     {
@@ -56,7 +55,7 @@ internal class CLRHost
             throw new InvalidOperationException("CLRHost not initialized");
         }
 
-        s_instance._callbackState = new CallbakState
+        s_instance._callbackState = new CallbackState
         {
             RequestCallback = requestCallback,
             AsyncCallback = asyncCallback,
@@ -109,9 +108,10 @@ internal class CLRHost
 
         return Core();
 
-        async ValueTask<CLRHost> Core()
+        static async ValueTask<CLRHost> Core()
         {
-            await s_linitializationLock.WaitAsync();
+            // This lock stops multiple threads from initializing the CLRHost at the same time
+            await s_instance.initLock.WaitAsync();
 
             try
             {
@@ -214,7 +214,7 @@ internal class CLRHost
             }
             finally
             {
-                s_linitializationLock.Release();
+                s_instance.initLock.Release();
             }
         }
     }
