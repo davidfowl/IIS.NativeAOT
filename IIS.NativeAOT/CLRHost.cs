@@ -32,8 +32,8 @@ internal class CLRHost
 
     private nint _hostContextHandle;
     private CallbackState _callbackState = new();
-    private readonly TaskCompletionSource _initializationTcs = new();
-    private readonly SemaphoreSlim initLock = new(1);
+    private readonly TaskCompletionSource _callbacksSetTcs = new();
+    private readonly SemaphoreSlim _initLock = new(1);
 
     public unsafe REQUEST_NOTIFICATION_STATUS OnExecuteRequestHandler(IHttpContext* pHttpContext, IHttpEventProvider* pProvider)
     {
@@ -62,7 +62,7 @@ internal class CLRHost
             Context = pContext,
         };
 
-        s_instance._initializationTcs.TrySetResult();
+        s_instance._callbacksSetTcs.TrySetResult();
     }
 
     [UnmanagedCallersOnly]
@@ -111,7 +111,7 @@ internal class CLRHost
         static async ValueTask<CLRHost> Core()
         {
             // This lock stops multiple threads from initializing the CLRHost at the same time
-            await s_instance.initLock.WaitAsync();
+            await s_instance._initLock.WaitAsync();
 
             try
             {
@@ -234,10 +234,16 @@ internal class CLRHost
                         // Once we get the handle, we're initialized
                         s_instance._initialized = true;
 
+                        // We spin up a new thread to run the hostfxr_run loop
+                        // this is because we're calling into main which is blocking
+                        // We don't want to block the IIS thread so we run the application outside of this thread
+                        // and watch for completion.
                         var thread = new Thread(static state =>
                         {
                             var host = (CLRHost)state!;
                             host._returnCode = HostFxrImports.Run(host._hostContextHandle);
+
+                            // TODO: When the application shuts down, this app pool should shut down as well
                         })
                         {
                             IsBackground = true
@@ -249,7 +255,7 @@ internal class CLRHost
 
                 try
                 {
-                    await s_instance._initializationTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    await s_instance._callbacksSetTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 }
                 catch (TimeoutException)
                 {
@@ -260,7 +266,7 @@ internal class CLRHost
             }
             finally
             {
-                s_instance.initLock.Release();
+                s_instance._initLock.Release();
             }
         }
     }
