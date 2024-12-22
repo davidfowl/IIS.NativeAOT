@@ -133,15 +133,27 @@ internal class CLRHost
                 // Environment.SetEnvironmentVariable("COREHOST_TRACE", "1");
                 // Environment.SetEnvironmentVariable("COREHOST_TRACE_VERBOSITY", "4");
 
-                // TODO: Look at the path
-                var dotnetRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet");
+                var dotnetRoot = GetDotnetRootPath();
 
-                var allHostFxrDirs = new DirectoryInfo(Path.Combine(dotnetRoot, "host\\fxr"));
-                var hostFxrDirectory = allHostFxrDirs.EnumerateDirectories().FirstOrDefault(d => d.Name.StartsWith("9.0"));
+                if (dotnetRoot is null)
+                {
+                    s_instance._error = Encoding.UTF8.GetBytes("Unable to find .NET installation.");
+                    s_instance._initialized = true;
+                    return s_instance;
+                }
+
+                var allHostFxrDirs = new DirectoryInfo(Path.Combine(dotnetRoot, "host", "fxr"));
+
+                // REVIEW: Should we parse the versions and pick the latest properly?
+                var hostFxrDirectory = (from d in allHostFxrDirs.EnumerateDirectories()
+                                        let version = FxVer.Parse(d.Name)
+                                        orderby version descending
+                                        select d)
+                                        .FirstOrDefault();
 
                 if (hostFxrDirectory is null)
                 {
-                    s_instance._error = Encoding.UTF8.GetBytes($"Unable to find 9.0.x hostfxr: {string.Join(Environment.NewLine, allHostFxrDirs)}");
+                    s_instance._error = Encoding.UTF8.GetBytes($"Unable to find hostfxr: {string.Join(Environment.NewLine, allHostFxrDirs)}");
                     s_instance._initialized = true;
                     return s_instance;
                 }
@@ -217,5 +229,38 @@ internal class CLRHost
                 s_instance.initLock.Release();
             }
         }
+    }
+
+    private static string? GetDotnetRootPath()
+    {
+        // Check the DOTNET_ROOT environment variable
+        string? dotnetRootEnv = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        if (!string.IsNullOrEmpty(dotnetRootEnv) && Directory.Exists(dotnetRootEnv))
+        {
+            return dotnetRootEnv;
+        }
+
+        // Check the default installation path for .NET
+        string programFilesDotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet");
+        if (Directory.Exists(programFilesDotnet))
+        {
+            return programFilesDotnet;
+        }
+
+        // Search for dotnet.exe in the PATH environment variable
+        string? pathEnvironmentVariable = Environment.GetEnvironmentVariable("PATH");
+        if (pathEnvironmentVariable != null)
+        {
+            foreach (string path in pathEnvironmentVariable.Split(Path.PathSeparator))
+            {
+                string potentialDotnetPath = Path.Combine(path, "dotnet");
+                if (File.Exists(Path.Combine(potentialDotnetPath, "dotnet.exe")))
+                {
+                    return potentialDotnetPath;
+                }
+            }
+        }
+
+        return null;
     }
 }
