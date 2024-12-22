@@ -133,6 +133,41 @@ internal class CLRHost
                 // Environment.SetEnvironmentVariable("COREHOST_TRACE", "1");
                 // Environment.SetEnvironmentVariable("COREHOST_TRACE_VERBOSITY", "4");
 
+                static string? GetDotnetRootPath()
+                {
+                    // Check the DOTNET_ROOT environment variable
+                    var dotnetRootEnv = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+                    if (!string.IsNullOrEmpty(dotnetRootEnv) && Directory.Exists(dotnetRootEnv))
+                    {
+                        return dotnetRootEnv;
+                    }
+
+                    // Check the default installation path for .NET
+                    var programFilesDotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet");
+                    if (Directory.Exists(programFilesDotnet))
+                    {
+                        return programFilesDotnet;
+                    }
+
+                    // Search for dotnet.exe in the PATH environment variable
+                    var pathEnvironmentVariable = Environment.GetEnvironmentVariable("PATH");
+                    if (pathEnvironmentVariable is null)
+                    {
+                        return null;
+                    }
+
+                    foreach (string path in pathEnvironmentVariable.Split(Path.PathSeparator))
+                    {
+                        string potentialDotnetPath = Path.Combine(path, "dotnet");
+                        if (File.Exists(Path.Combine(potentialDotnetPath, "dotnet.exe")))
+                        {
+                            return potentialDotnetPath;
+                        }
+                    }
+
+                    return null;
+                }
+
                 var dotnetRoot = GetDotnetRootPath();
 
                 if (dotnetRoot is null)
@@ -202,8 +237,7 @@ internal class CLRHost
                         var thread = new Thread(static state =>
                         {
                             var host = (CLRHost)state!;
-                            int val = HostFxrImports.Run(host._hostContextHandle);
-                            host._returnCode = val;
+                            host._returnCode = HostFxrImports.Run(host._hostContextHandle);
                         })
                         {
                             IsBackground = true
@@ -229,40 +263,5 @@ internal class CLRHost
                 s_instance.initLock.Release();
             }
         }
-    }
-
-    private static string? GetDotnetRootPath()
-    {
-        // Check the DOTNET_ROOT environment variable
-        var dotnetRootEnv = Environment.GetEnvironmentVariable("DOTNET_ROOT");
-        if (!string.IsNullOrEmpty(dotnetRootEnv) && Directory.Exists(dotnetRootEnv))
-        {
-            return dotnetRootEnv;
-        }
-
-        // Check the default installation path for .NET
-        var programFilesDotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet");
-        if (Directory.Exists(programFilesDotnet))
-        {
-            return programFilesDotnet;
-        }
-
-        // Search for dotnet.exe in the PATH environment variable
-        var pathEnvironmentVariable = Environment.GetEnvironmentVariable("PATH");
-        if (pathEnvironmentVariable is null)
-        {
-            return null;
-        }
-
-        foreach (string path in pathEnvironmentVariable.Split(Path.PathSeparator))
-        {
-            string potentialDotnetPath = Path.Combine(path, "dotnet");
-            if (File.Exists(Path.Combine(potentialDotnetPath, "dotnet.exe")))
-            {
-                return potentialDotnetPath;
-            }
-        }
-
-        return null;
     }
 }
