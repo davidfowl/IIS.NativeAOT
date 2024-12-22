@@ -319,12 +319,12 @@ internal unsafe struct HttpModuleImpl : CHttpModule.Interface
 
         if (instanceTask.IsCompleted)
         {
-            return instanceTask.Result.OnExecuteRequestHandler(pHttpContext, pProvider);
+            return instanceTask.Result.ManagedApplication.OnExecuteRequestHandler(pHttpContext, pProvider);
         }
 
         instanceTask.AsTask().ContinueWith(t =>
         {
-            var val = t.Result.OnExecuteRequestHandler(pHttpContext, pProvider);
+            var val = t.Result.ManagedApplication.OnExecuteRequestHandler(pHttpContext, pProvider);
 
             pHttpContext->IndicateCompletion(val);
         });
@@ -403,12 +403,12 @@ internal unsafe struct HttpModuleImpl : CHttpModule.Interface
 
         if (instanceTask.IsCompleted)
         {
-            return instanceTask.Result.OnAsyncCompletion(pHttpContext, dwNotification, fPostNotification, pProvider, pCompletionInfo);
+            return instanceTask.Result.ManagedApplication.OnAsyncCompletion(pHttpContext, dwNotification, fPostNotification, pProvider, pCompletionInfo);
         }
 
         instanceTask.AsTask().ContinueWith(t =>
         {
-            var val = t.Result.OnAsyncCompletion(pHttpContext, dwNotification, fPostNotification, pProvider, pCompletionInfo);
+            var val = t.Result.ManagedApplication.OnAsyncCompletion(pHttpContext, dwNotification, fPostNotification, pProvider, pCompletionInfo);
             
             pHttpContext->IndicateCompletion(val);
         });

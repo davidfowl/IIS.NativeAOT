@@ -1,107 +1,65 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.Diagnostics.CodeAnalysis;
+using System.Runtime.InteropServices;
 using System.Text;
-using TerraFX.Interop.Windows;
 
 namespace IIS.NativeAOT;
 
 internal class CLRHost
 {
     private static readonly CLRHost s_instance = new();
+    private static readonly byte[] s_defaultErrorPage =
+        """
+        <html>
+           <head>
+            <title>Internal Server Error</title>
+           </head>
+           <body>
+           <h1>Internal Server Error</h1>
+           <p>Failed to initialize the .NET application.</p>
+           </body>
+        </html>
+        """u8.ToArray();
 
-    unsafe class CallbackState
-    {
-        public delegate* unmanaged<IntPtr, IntPtr, IntPtr, int> RequestCallback = &ErrorPage;
-        public delegate* unmanaged<IntPtr, IntPtr, uint, int, IntPtr, IntPtr, int> AsyncCallback;
-        public IntPtr Context;
-    }
+    private static readonly TimeSpan s_managedApplicationTimeout = TimeSpan.FromSeconds(5);
 
-    private bool _initialized;
+    // The return code from the hostfxr_run call or the error code from initialization
     private int _returnCode;
-    private byte[] _error =
-            """
-            <html>
-               <head>
-                <title>Internal Server Error</title>
-               </head>
-               <body>
-               <h1>Internal Server Error</h1>
-               <p>Failed to initialize the .NET application.</p>
-               </body>
-            </html>
-            """u8.ToArray();
 
+    // The handle to the host context, used to run the application
     private nint _hostContextHandle;
-    private CallbackState _callbackState = new();
-    private readonly TaskCompletionSource _callbacksSetTcs = new();
+
+    // The managed application instance, this is guaranteed to be set after initialization either by the managed code calling
+    // RegisterCallbacks or by the initialization code because that timed out.
+    private ManagedApplication? _managedApplication;
+
+    private readonly TaskCompletionSource<ManagedApplication> _managedApplicationTcs = new();
     private readonly SemaphoreSlim _initLock = new(1);
 
-    public unsafe REQUEST_NOTIFICATION_STATUS OnExecuteRequestHandler(IHttpContext* pHttpContext, IHttpEventProvider* pProvider)
-    {
-        return (REQUEST_NOTIFICATION_STATUS)_callbackState.RequestCallback(_callbackState.Context, (IntPtr)pHttpContext, (IntPtr)pProvider);
-    }
+    public ManagedApplication ManagedApplication => _managedApplication!;
 
-    public unsafe REQUEST_NOTIFICATION_STATUS OnAsyncCompletion(IHttpContext* pHttpContext, uint dwNotification, BOOL fPostNotification, IHttpEventProvider* pProvider, IHttpCompletionInfo* pCompletionInfo)
-    {
-        return (REQUEST_NOTIFICATION_STATUS)_callbackState.AsyncCallback(_callbackState.Context, (IntPtr)pHttpContext, dwNotification, (int)fPostNotification, (IntPtr)pProvider, (IntPtr)pCompletionInfo);
-    }
+    private bool IsInitialized => _managedApplication is not null;
 
     internal unsafe static void RegisterCallbacks(
         delegate* unmanaged<IntPtr, IntPtr, IntPtr, int> requestCallback,
         delegate* unmanaged<IntPtr, IntPtr, uint, int, IntPtr, IntPtr, int> asyncCallback,
         IntPtr pContext)
     {
-        if (!s_instance._initialized)
+        if (!s_instance._managedApplicationTcs.TrySetResult(new ManagedApplication(requestCallback, asyncCallback, pContext)))
         {
-            throw new InvalidOperationException("CLRHost not initialized");
+            throw new InvalidOperationException("Managed application already initialized.");
         }
-
-        s_instance._callbackState = new CallbackState
-        {
-            RequestCallback = requestCallback,
-            AsyncCallback = asyncCallback,
-            Context = pContext,
-        };
-
-        s_instance._callbacksSetTcs.TrySetResult();
     }
 
-    [UnmanagedCallersOnly]
-    public unsafe static int ErrorPage(IntPtr _, IntPtr pHttpContext, IntPtr pModuleInfo)
+    private void ApplicationFailed(string? error = null)
     {
-        var httpContext = (IHttpContext*)pHttpContext;
-        var pResponse = httpContext->GetResponse();
-        pResponse->Clear();
-
-        // These strings must be null-terminated
-        fixed (byte* statusDescription = "Internal Server Error\u0000"u8)
-        {
-            pResponse->SetStatus(500, (sbyte*)statusDescription);
-        }
-
-        fixed (byte* headerName = "Content-Type\u0000"u8)
-        fixed (byte* headerValue = "text/html\u0000"u8)
-        {
-            pResponse->SetHeader((sbyte*)headerName, (sbyte*)headerValue, 9, fReplace: true);
-        }
-
-        HTTP_DATA_CHUNK chunk = default;
-        chunk.DataChunkType = HTTP_DATA_CHUNK_TYPE.HttpDataChunkFromMemory;
-
-        fixed (byte* pBody = s_instance._error)
-        {
-            chunk.FromMemory.pBuffer = pBody;
-            chunk.FromMemory.BufferLength = (uint)s_instance._error.Length;
-
-            uint bytesSent;
-            pResponse->WriteEntityChunks(&chunk, 1, fAsync: false, fMoreData: false, &bytesSent);
-        }
-
-        return (int)REQUEST_NOTIFICATION_STATUS.RQ_NOTIFICATION_FINISH_REQUEST;
+        var errorBytes = error is null ? s_defaultErrorPage : Encoding.UTF8.GetBytes(error);
+        _managedApplication = new ManagedApplication(errorBytes);
     }
 
+    [MemberNotNull(nameof(_managedApplication))]
     public static ValueTask<CLRHost> GetOrCreateAsync()
     {
-        if (s_instance._initialized)
+        if (s_instance.IsInitialized)
         {
             return ValueTask.FromResult(s_instance);
         }
@@ -115,7 +73,7 @@ internal class CLRHost
 
             try
             {
-                if (s_instance._initialized)
+                if (s_instance.IsInitialized)
                 {
                     return s_instance;
                 }
@@ -124,8 +82,7 @@ internal class CLRHost
 
                 if (!OperatingSystem.IsWindows())
                 {
-                    s_instance._error = Encoding.UTF8.GetBytes($"{RuntimeInformation.RuntimeIdentifier} is unsupported.");
-                    s_instance._initialized = true;
+                    s_instance.ApplicationFailed($"{RuntimeInformation.RuntimeIdentifier} is unsupported.");
                     return s_instance;
                 }
 
@@ -172,8 +129,7 @@ internal class CLRHost
 
                 if (dotnetRoot is null)
                 {
-                    s_instance._error = Encoding.UTF8.GetBytes("Unable to find .NET installation.");
-                    s_instance._initialized = true;
+                    s_instance.ApplicationFailed("Unable to find .NET installation.");
                     return s_instance;
                 }
 
@@ -188,8 +144,7 @@ internal class CLRHost
 
                 if (hostFxrDirectory is null)
                 {
-                    s_instance._error = Encoding.UTF8.GetBytes($"Unable to find hostfxr: {string.Join(Environment.NewLine, allHostFxrDirs)}");
-                    s_instance._initialized = true;
+                    s_instance.ApplicationFailed($"Unable to find hostfxr in {dotnetRoot}");
                     return s_instance;
                 }
 
@@ -201,8 +156,7 @@ internal class CLRHost
 
                 if (string.IsNullOrEmpty(dll))
                 {
-                    s_instance._error = "DOTNET_DLL environment variable is not set."u8.ToArray();
-                    s_instance._initialized = true;
+                    s_instance.ApplicationFailed("DOTNET_DLL environment variable is not set.");
                     return s_instance;
                 }
 
@@ -225,14 +179,11 @@ internal class CLRHost
                         if (err < 0)
                         {
                             s_instance._returnCode = err;
-                            s_instance._error = Encoding.UTF8.GetBytes($"Error initializing hostfxr {err}");
-                            s_instance._initialized = true;
+                            s_instance.ApplicationFailed($"Error initializing hostfxr {err}");
                             return s_instance;
                         }
 
                         s_instance._hostContextHandle = host_context_handle;
-                        // Once we get the handle, we're initialized
-                        s_instance._initialized = true;
 
                         // We spin up a new thread to run the hostfxr_run loop
                         // this is because we're calling into main which is blocking
@@ -255,11 +206,13 @@ internal class CLRHost
 
                 try
                 {
-                    await s_instance._callbacksSetTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    var application = await s_instance._managedApplicationTcs.Task.WaitAsync(s_managedApplicationTimeout);
+                    s_instance._managedApplication = application;
                 }
                 catch (TimeoutException)
                 {
                     // Timed out
+                    s_instance.ApplicationFailed("Managed application initialization timed out.");
                 }
 
                 return s_instance;
