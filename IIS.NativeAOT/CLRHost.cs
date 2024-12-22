@@ -1,4 +1,5 @@
-﻿using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -29,15 +30,20 @@ internal class CLRHost
     private nint _hostContextHandle;
 
     // The managed application instance, this is guaranteed to be set after initialization either by the managed code calling
-    // RegisterCallbacks or by the initialization code because that timed out.
-    private ManagedApplication? _managedApplication;
-
+    // RegisterCallbacks or by the initialization code because of an error;
     private readonly TaskCompletionSource<ManagedApplication> _managedApplicationTcs = new();
     private readonly SemaphoreSlim _initLock = new(1);
 
-    public ManagedApplication ManagedApplication => _managedApplication!;
+    private bool IsInitialized => _managedApplicationTcs.Task.IsCompleted;
 
-    private bool IsInitialized => _managedApplication is not null;
+    private ManagedApplication ManagedApplication
+    {
+        get
+        {
+            Debug.Assert(IsInitialized);
+            return _managedApplicationTcs.Task.Result;
+        }
+    }
 
     internal unsafe static void RegisterCallbacks(
         delegate* unmanaged<IntPtr, IntPtr, IntPtr, int> requestCallback,
@@ -50,23 +56,23 @@ internal class CLRHost
         }
     }
 
-    private void ApplicationFailed(string? error = null)
+    private ManagedApplication SetApplicationFailed(string? error = null)
     {
         var errorBytes = error is null ? s_defaultErrorPage : Encoding.UTF8.GetBytes(error);
-        _managedApplication = new ManagedApplication(errorBytes);
+        _managedApplicationTcs.TrySetResult(new ManagedApplication(errorBytes));
+        return ManagedApplication;
     }
 
-    [MemberNotNull(nameof(_managedApplication))]
-    public static ValueTask<CLRHost> GetOrCreateAsync()
+    public static ValueTask<ManagedApplication> GetOrCreateAsync()
     {
         if (s_instance.IsInitialized)
         {
-            return ValueTask.FromResult(s_instance);
+            return ValueTask.FromResult(s_instance.ManagedApplication);
         }
 
         return Core();
 
-        static async ValueTask<CLRHost> Core()
+        static async ValueTask<ManagedApplication> Core()
         {
             // This lock stops multiple threads from initializing the CLRHost at the same time
             await s_instance._initLock.WaitAsync();
@@ -75,15 +81,14 @@ internal class CLRHost
             {
                 if (s_instance.IsInitialized)
                 {
-                    return s_instance;
+                    return s_instance.ManagedApplication;
                 }
 
                 // See https://github.com/dotnet/runtime/blob/main/docs/design/features/native-hosting.md for more information on native hosting in .NET.
 
                 if (!OperatingSystem.IsWindows())
                 {
-                    s_instance.ApplicationFailed($"{RuntimeInformation.RuntimeIdentifier} is unsupported.");
-                    return s_instance;
+                    return s_instance.SetApplicationFailed($"{RuntimeInformation.RuntimeIdentifier} is unsupported.");
                 }
 
                 // Uncomment to debug
@@ -129,8 +134,7 @@ internal class CLRHost
 
                 if (dotnetRoot is null)
                 {
-                    s_instance.ApplicationFailed("Unable to find .NET installation.");
-                    return s_instance;
+                    return s_instance.SetApplicationFailed("Unable to find .NET installation.");
                 }
 
                 var allHostFxrDirs = new DirectoryInfo(Path.Combine(dotnetRoot, "host", "fxr"));
@@ -144,8 +148,7 @@ internal class CLRHost
 
                 if (hostFxrDirectory is null)
                 {
-                    s_instance.ApplicationFailed($"Unable to find hostfxr in {dotnetRoot}");
-                    return s_instance;
+                    return s_instance.SetApplicationFailed($"Unable to find hostfxr in {dotnetRoot}");
                 }
 
                 // Console.WriteLine($"Using hostfxr: {hostFxrDirectory}");
@@ -156,8 +159,7 @@ internal class CLRHost
 
                 if (string.IsNullOrEmpty(dll))
                 {
-                    s_instance.ApplicationFailed("DOTNET_DLL environment variable is not set.");
-                    return s_instance;
+                    return s_instance.SetApplicationFailed("DOTNET_DLL environment variable is not set.");
                 }
 
                 string[] args = [dll!];
@@ -179,8 +181,7 @@ internal class CLRHost
                         if (err < 0)
                         {
                             s_instance._returnCode = err;
-                            s_instance.ApplicationFailed($"Error initializing hostfxr {err}");
-                            return s_instance;
+                            return s_instance.SetApplicationFailed($"Error initializing hostfxr {err}");
                         }
 
                         s_instance._hostContextHandle = host_context_handle;
@@ -206,16 +207,13 @@ internal class CLRHost
 
                 try
                 {
-                    var application = await s_instance._managedApplicationTcs.Task.WaitAsync(s_managedApplicationTimeout);
-                    s_instance._managedApplication = application;
+                    return await s_instance._managedApplicationTcs.Task.WaitAsync(s_managedApplicationTimeout);
                 }
                 catch (TimeoutException)
                 {
                     // Timed out
-                    s_instance.ApplicationFailed("Managed application initialization timed out.");
+                    return s_instance.SetApplicationFailed("Managed application initialization timed out.");
                 }
-
-                return s_instance;
             }
             finally
             {
