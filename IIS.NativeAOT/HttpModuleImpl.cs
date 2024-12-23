@@ -322,7 +322,7 @@ internal unsafe struct HttpModuleImpl : CHttpModule.Interface
             return instanceTask.Result.OnExecuteRequestHandler(pHttpContext, pProvider);
         }
 
-        instanceTask.AsTask().ContinueWith(t =>
+        instanceTask.ContinueWith(t =>
         {
             var val = t.Result.OnExecuteRequestHandler(pHttpContext, pProvider);
 
@@ -406,7 +406,7 @@ internal unsafe struct HttpModuleImpl : CHttpModule.Interface
             return instanceTask.Result.OnAsyncCompletion(pHttpContext, dwNotification, fPostNotification, pProvider, pCompletionInfo);
         }
 
-        instanceTask.AsTask().ContinueWith(t =>
+        instanceTask.ContinueWith(t =>
         {
             var val = t.Result.OnAsyncCompletion(pHttpContext, dwNotification, fPostNotification, pProvider, pCompletionInfo);
             

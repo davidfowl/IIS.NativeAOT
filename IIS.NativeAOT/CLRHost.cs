@@ -1,7 +1,4 @@
-﻿using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
-using System.Runtime.InteropServices;
-using System.Text;
+﻿using System.Text;
 
 namespace IIS.NativeAOT;
 
@@ -24,7 +21,7 @@ internal class CLRHost
     private static readonly TimeSpan s_managedApplicationTimeout = TimeSpan.FromSeconds(5);
 
     // The return code from the hostfxr_run call or the error code from initialization
-    private int _returnCode;
+    private int? _returnCode;
 
     // The handle to the host context, used to run the application
     private nint _hostContextHandle;
@@ -35,15 +32,6 @@ internal class CLRHost
     private readonly SemaphoreSlim _initLock = new(1);
 
     private bool IsInitialized => _managedApplicationTcs.Task.IsCompleted;
-
-    private ManagedApplication ManagedApplication
-    {
-        get
-        {
-            Debug.Assert(IsInitialized);
-            return _managedApplicationTcs.Task.Result;
-        }
-    }
 
     internal unsafe static void RegisterCallbacks(
         delegate* unmanaged<IntPtr, IntPtr, IntPtr, int> requestCallback,
@@ -56,163 +44,77 @@ internal class CLRHost
         }
     }
 
-    private ManagedApplication SetApplicationFailed(string? error = null)
+    private Task<ManagedApplication> SetApplicationFailed(string? error = null)
     {
         var errorBytes = error is null ? s_defaultErrorPage : Encoding.UTF8.GetBytes(error);
         _managedApplicationTcs.TrySetResult(new ManagedApplication(errorBytes));
-        return ManagedApplication;
+        return _managedApplicationTcs.Task;
     }
 
-    public static ValueTask<ManagedApplication> GetOrCreateAsync()
+    public static Task<ManagedApplication> GetOrCreateAsync()
     {
-        if (s_instance.IsInitialized)
+        // If the instance is already initialized we can just return the task
+        if (s_instance.IsInitialized || !s_instance._initLock.Wait(0))
         {
-            return ValueTask.FromResult(s_instance.ManagedApplication);
+            return s_instance._managedApplicationTcs.Task;
         }
 
-        return Core();
+        // _initLock stops multiple threads from initializing the CLRHost at the same time
+        // This is split into a local method to avoid the state machine in the fast path
+        return CreateApplicationAsync();
 
-        static async ValueTask<ManagedApplication> Core()
+        static async Task<ManagedApplication> CreateApplicationAsync()
         {
-            // This lock stops multiple threads from initializing the CLRHost at the same time
-            await s_instance._initLock.WaitAsync();
-
+            // This method assumes we have the semaphore
             try
             {
                 if (s_instance.IsInitialized)
                 {
-                    return s_instance.ManagedApplication;
+                    return await s_instance._managedApplicationTcs.Task;
                 }
-
-                // See https://github.com/dotnet/runtime/blob/main/docs/design/features/native-hosting.md for more information on native hosting in .NET.
-
-                if (!OperatingSystem.IsWindows())
-                {
-                    return s_instance.SetApplicationFailed($"{RuntimeInformation.RuntimeIdentifier} is unsupported.");
-                }
-
-                // Uncomment to debug
-                // Environment.SetEnvironmentVariable("COREHOST_TRACE", "1");
-                // Environment.SetEnvironmentVariable("COREHOST_TRACE_VERBOSITY", "4");
-
-                static string? GetDotnetRootPath()
-                {
-                    // Check the DOTNET_ROOT environment variable
-                    var dotnetRootEnv = Environment.GetEnvironmentVariable("DOTNET_ROOT");
-                    if (!string.IsNullOrEmpty(dotnetRootEnv) && Directory.Exists(dotnetRootEnv))
-                    {
-                        return dotnetRootEnv;
-                    }
-
-                    // Check the default installation path for .NET
-                    var programFilesDotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet");
-                    if (Directory.Exists(programFilesDotnet))
-                    {
-                        return programFilesDotnet;
-                    }
-
-                    // Search for dotnet.exe in the PATH environment variable
-                    var pathEnvironmentVariable = Environment.GetEnvironmentVariable("PATH");
-                    if (pathEnvironmentVariable is null)
-                    {
-                        return null;
-                    }
-
-                    foreach (string path in pathEnvironmentVariable.Split(Path.PathSeparator))
-                    {
-                        string potentialDotnetPath = Path.Combine(path, "dotnet");
-                        if (File.Exists(Path.Combine(potentialDotnetPath, "dotnet.exe")))
-                        {
-                            return potentialDotnetPath;
-                        }
-                    }
-
-                    return null;
-                }
-
-                var dotnetRoot = GetDotnetRootPath();
-
-                if (dotnetRoot is null)
-                {
-                    return s_instance.SetApplicationFailed("Unable to find .NET installation.");
-                }
-
-                var allHostFxrDirs = new DirectoryInfo(Path.Combine(dotnetRoot, "host", "fxr"));
-
-                // REVIEW: Should we parse the versions and pick the latest properly?
-                var hostFxrDirectory = (from d in allHostFxrDirs.EnumerateDirectories()
-                                        let version = FxVer.Parse(d.Name)
-                                        orderby version descending
-                                        select d)
-                                        .FirstOrDefault();
-
-                if (hostFxrDirectory is null)
-                {
-                    return s_instance.SetApplicationFailed($"Unable to find hostfxr in {dotnetRoot}");
-                }
-
-                // Console.WriteLine($"Using hostfxr: {hostFxrDirectory}");
-
-                NativeLibrary.Load(Path.Combine(hostFxrDirectory.FullName, "hostfxr.dll"));
 
                 var dll = Environment.GetEnvironmentVariable("DOTNET_DLL");
 
-                if (string.IsNullOrEmpty(dll))
+                var (error, errorCode, handle) = HostFxr.Initialize(dll);
+
+                if (error is not null)
                 {
-                    return s_instance.SetApplicationFailed("DOTNET_DLL environment variable is not set.");
+                    s_instance._returnCode = errorCode;
+
+                    return await s_instance.SetApplicationFailed(error);
                 }
-
-                string[] args = [dll!];
-
-                unsafe
+                else
                 {
-                    fixed (char* hostPathPointer = Environment.CurrentDirectory)
-                    fixed (char* dotnetRootPointer = dotnetRoot)
+                    s_instance._hostContextHandle = handle;
+
+                    // We spin up a new thread to run the hostfxr_run loop
+                    // this is because we're calling into main which is blocking
+                    // We don't want to block the IIS thread so we run the application outside of this thread
+                    // and watch for completion.
+                    var thread = new Thread(static state =>
                     {
-                        var parameters = new HostFxrImports.hostfxr_initialize_parameters
-                        {
-                            size = sizeof(HostFxrImports.hostfxr_initialize_parameters),
-                            host_path = hostPathPointer,
-                            dotnet_root = dotnetRootPointer
-                        };
+                        var host = (CLRHost)state!;
+                        host._returnCode = HostFxrImports.Run(host._hostContextHandle);
 
-                        var err = HostFxrImports.Initialize(args.Length, args, ref parameters, out var host_context_handle);
+                        // TODO: When the application shuts down, this app pool should shut down as well
+                    })
+                    {
+                        IsBackground = true
+                    };
 
-                        if (err < 0)
-                        {
-                            s_instance._returnCode = err;
-                            return s_instance.SetApplicationFailed($"Error initializing hostfxr {err}");
-                        }
+                    thread.Start(s_instance);
 
-                        s_instance._hostContextHandle = host_context_handle;
-
-                        // We spin up a new thread to run the hostfxr_run loop
-                        // this is because we're calling into main which is blocking
-                        // We don't want to block the IIS thread so we run the application outside of this thread
-                        // and watch for completion.
-                        var thread = new Thread(static state =>
-                        {
-                            var host = (CLRHost)state!;
-                            host._returnCode = HostFxrImports.Run(host._hostContextHandle);
-
-                            // TODO: When the application shuts down, this app pool should shut down as well
-                        })
-                        {
-                            IsBackground = true
-                        };
-
-                        thread.Start(s_instance);
+                    // We boot the managed application and wait for it to call back into RegisterCallbacks
+                    // if it doesn't within the timeout we fail the application initialization and set the error page
+                    try
+                    {
+                        return await s_instance._managedApplicationTcs.Task.WaitAsync(s_managedApplicationTimeout);
                     }
-                }
-
-                try
-                {
-                    return await s_instance._managedApplicationTcs.Task.WaitAsync(s_managedApplicationTimeout);
-                }
-                catch (TimeoutException)
-                {
-                    // Timed out
-                    return s_instance.SetApplicationFailed("Managed application initialization timed out.");
+                    catch (TimeoutException)
+                    {
+                        // Timed out
+                        return await s_instance.SetApplicationFailed("Managed application initialization timed out.");
+                    }
                 }
             }
             finally

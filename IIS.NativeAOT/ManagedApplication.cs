@@ -30,7 +30,7 @@ internal unsafe class ManagedApplication
     }
 
     [UnmanagedCallersOnly]
-    public unsafe static int ErrorPage(IntPtr context, IntPtr pHttpContext, IntPtr pModuleInfo)
+    private unsafe static int ErrorPage(IntPtr context, IntPtr pHttpContext, IntPtr pModuleInfo)
     {
         var app = (ManagedApplication)((GCHandle)context).Target!;
         var error = app._error!;
@@ -67,7 +67,7 @@ internal unsafe class ManagedApplication
     }
 
     [UnmanagedCallersOnly]
-    public unsafe static int OnAsyncCallback(IntPtr pContext, IntPtr pHttpContext, uint dwNotification, int fPostNotification, IntPtr pProvider, IntPtr pCompletionInfo)
+    private unsafe static int OnAsyncCallback(IntPtr pContext, IntPtr pHttpContext, uint dwNotification, int fPostNotification, IntPtr pProvider, IntPtr pCompletionInfo)
     {
         return (int)REQUEST_NOTIFICATION_STATUS.RQ_NOTIFICATION_CONTINUE;
     }
