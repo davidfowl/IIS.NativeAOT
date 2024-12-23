@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Diagnostics;
+using System.Text;
 
 namespace IIS.NativeAOT;
 
@@ -40,6 +41,7 @@ internal sealed class CLRHost
     {
         if (!s_instance._managedApplicationTcs.TrySetResult(new ManagedApplication(requestCallback, asyncCallback, pContext)))
         {
+            // TODO: Return an error code
             throw new InvalidOperationException("Managed application already initialized.");
         }
     }
@@ -119,6 +121,8 @@ internal sealed class CLRHost
             }
             finally
             {
+                Debug.Assert(s_instance.IsInitialized, "The CLR host isn't fully initialized");
+
                 s_instance._initLock.Release();
             }
         }
