@@ -91,9 +91,9 @@ internal static class HostFxr
             return null;
         }
 
-        foreach (string path in pathEnvironmentVariable.Split(Path.PathSeparator))
+        foreach (var path in pathEnvironmentVariable.Split(Path.PathSeparator))
         {
-            string potentialDotnetPath = Path.Combine(path, "dotnet");
+            var potentialDotnetPath = Path.Combine(path, "dotnet");
             if (File.Exists(Path.Combine(potentialDotnetPath, "dotnet.exe")))
             {
                 return potentialDotnetPath;

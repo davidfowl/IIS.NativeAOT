@@ -1,6 +1,6 @@
 ﻿namespace IIS.NativeAOT;
 
-internal class FxVer : IComparable<FxVer>
+internal sealed class FxVer : IComparable<FxVer>
 {
     public int Major { get; }
     public int Minor { get; }
@@ -36,7 +36,7 @@ internal class FxVer : IComparable<FxVer>
             throw new FormatException($"Invalid version format: {version}");
         }
 
-        string? preRelease = parts.Length > 1 ? parts[1] : null;
+        var preRelease = parts.Length > 1 ? parts[1] : null;
         return new FxVer(majorNumber, minorNumber, patchNumber, preRelease);
     }
 

@@ -2,7 +2,7 @@
 
 namespace IIS.NativeAOT;
 
-internal class CLRHost
+internal sealed class CLRHost
 {
     private static readonly CLRHost s_instance = new();
     private static readonly byte[] s_defaultErrorPage =

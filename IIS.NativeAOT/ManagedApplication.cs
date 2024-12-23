@@ -3,7 +3,7 @@ using TerraFX.Interop.Windows;
 
 namespace IIS.NativeAOT;
 
-internal unsafe class ManagedApplication
+internal sealed unsafe class ManagedApplication
 {
     private readonly delegate* unmanaged<IntPtr, IntPtr, IntPtr, int> _requestCallback;
     private readonly delegate* unmanaged<IntPtr, IntPtr, uint, int, IntPtr, IntPtr, int> _asyncCallback;
@@ -71,7 +71,6 @@ internal unsafe class ManagedApplication
     {
         return (int)REQUEST_NOTIFICATION_STATUS.RQ_NOTIFICATION_CONTINUE;
     }
-
 
     public unsafe REQUEST_NOTIFICATION_STATUS OnExecuteRequestHandler(IHttpContext* pHttpContext, IHttpEventProvider* pProvider)
     {

@@ -15,7 +15,7 @@ var tcs = new TaskCompletionSource();
 PosixSignalRegistration.Create(PosixSignal.SIGTERM, x => tcs.TrySetResult());
 await tcs.Task;
 
-class RequestHandler
+sealed class RequestHandler
 {
     [UnmanagedCallersOnly]
     public static unsafe int OnExecuteRequest(IntPtr context, IntPtr pHttpContext, IntPtr pProvider)
@@ -61,7 +61,6 @@ class RequestHandler
 
         return REQUEST_NOTIFICATION_STATUS.RQ_NOTIFICATION_CONTINUE;
     }
-
 
     public REQUEST_NOTIFICATION_STATUS OnAsyncCompletion(nint pHttpContext, uint dwNotification, int fPostNotification, nint pProvider, nint pCompletionInfo)
     {

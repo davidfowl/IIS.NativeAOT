@@ -26,7 +26,6 @@ public static class IISNativeModule
         return 0; // Success
     }
 
-
     [UnmanagedCallersOnly(EntryPoint = "RegisterCallbacks")]
     public unsafe static int RegisterCallbacks(
         delegate* unmanaged<IntPtr, IntPtr, IntPtr, int> requestCallback,
