@@ -34,16 +34,18 @@ internal sealed class CLRHost
 
     private bool IsInitialized => _managedApplicationTcs.Task.IsCompleted;
 
-    internal unsafe static void RegisterCallbacks(
+    internal unsafe static int RegisterCallbacks(
         delegate* unmanaged<IntPtr, IntPtr, IntPtr, int> requestCallback,
         delegate* unmanaged<IntPtr, IntPtr, uint, int, IntPtr, IntPtr, int> asyncCallback,
         IntPtr pContext)
     {
         if (!s_instance._managedApplicationTcs.TrySetResult(new ManagedApplication(requestCallback, asyncCallback, pContext)))
         {
-            // TODO: Return an error code
-            throw new InvalidOperationException("Managed application already initialized.");
+            // -1 = Already initialized
+            return -1;
         }
+
+        return 0;
     }
 
     private Task<ManagedApplication> SetApplicationFailed(string? error = null)

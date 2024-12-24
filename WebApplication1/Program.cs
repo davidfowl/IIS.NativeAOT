@@ -7,7 +7,13 @@ Console.WriteLine("Hello Managed code!");
 unsafe
 {
     var handler = new RequestHandler();
-    NativeMethods.RegisterCallbacks(&RequestHandler.OnExecuteRequest, &RequestHandler.OnAsyncCompletion, (IntPtr)GCHandle.Alloc(handler));
+    var ret = NativeMethods.RegisterCallbacks(&RequestHandler.OnExecuteRequest, &RequestHandler.OnAsyncCompletion, (IntPtr)GCHandle.Alloc(handler));
+
+    if (ret < 0)
+    {
+        Console.WriteLine("Failed to register callbacks");
+        return;
+    }
 }
 
 // Wait for ctrl + C or some other signal

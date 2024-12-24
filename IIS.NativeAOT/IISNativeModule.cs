@@ -32,7 +32,6 @@ public static class IISNativeModule
         delegate* unmanaged<IntPtr, IntPtr, uint, int, IntPtr, IntPtr, int> asyncCallback,
         IntPtr context)
     {
-        CLRHost.RegisterCallbacks(requestCallback, asyncCallback, context);
-        return 0;
+        return CLRHost.RegisterCallbacks(requestCallback, asyncCallback, context);
     }
 }
