@@ -68,6 +68,9 @@ internal static class HostFxr
         }
     }
 
+    public static int? Run(nint hostContextHandle) =>
+        HostFxrImports.Run(hostContextHandle);
+
     private static string? GetDotnetRootPath()
     {
         // Check the DOTNET_ROOT environment variable

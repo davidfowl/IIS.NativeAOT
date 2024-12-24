@@ -93,10 +93,9 @@ internal sealed class CLRHost
                     // this is because we're calling into main which is blocking
                     // We don't want to block the IIS thread so we run the application outside of this thread
                     // and watch for completion.
-                    var thread = new Thread(static state =>
+                    var thread = new Thread(static _ =>
                     {
-                        var host = (CLRHost)state!;
-                        host._returnCode = HostFxrImports.Run(host._hostContextHandle);
+                        s_instance._returnCode = HostFxr.Run(s_instance._hostContextHandle);
 
                         // TODO: When the application shuts down, this app pool should shut down as well
                     })
@@ -104,7 +103,7 @@ internal sealed class CLRHost
                         IsBackground = true
                     };
 
-                    thread.Start(s_instance);
+                    thread.Start();
 
                     // We boot the managed application and wait for it to call back into RegisterCallbacks
                     // if it doesn't within the timeout we fail the application initialization and set the error page
