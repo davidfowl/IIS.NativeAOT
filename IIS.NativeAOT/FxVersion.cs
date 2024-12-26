@@ -25,7 +25,7 @@ internal sealed class FxVer : IComparable<FxVer>
         var parts = version.Split('-', 2);
         var mainParts = parts[0].Split('.') switch
         {
-            [var major, var minor, var patch] => (major, minor, patch),
+        [var major, var minor, var patch] => (major, minor, patch),
             _ => throw new FormatException($"Invalid version format: {version}")
         };
 
@@ -82,5 +82,15 @@ internal sealed class FxVer : IComparable<FxVer>
     public override string ToString()
     {
         return PreRelease == null ? $"{Major}.{Minor}.{Patch}" : $"{Major}.{Minor}.{Patch}-{PreRelease}";
+    }
+
+    public static bool operator >(FxVer left, FxVer right)
+    {
+        return left.CompareTo(right) > 0;
+    }
+
+    public static bool operator <(FxVer left, FxVer right)
+    {
+        return left.CompareTo(right) < 0;
     }
 }

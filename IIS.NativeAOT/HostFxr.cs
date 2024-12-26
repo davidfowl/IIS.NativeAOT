@@ -21,12 +21,18 @@ internal static class HostFxr
 
         var allHostFxrDirs = new DirectoryInfo(Path.Combine(dotnetRoot, "host", "fxr"));
 
-        // REVIEW: Should we parse the versions and pick the latest properly?
-        var hostFxrDirectory = (from d in allHostFxrDirs.EnumerateDirectories()
-                                let version = FxVer.Parse(d.Name)
-                                orderby version descending
-                                select d)
-                                .FirstOrDefault();
+        DirectoryInfo? hostFxrDirectory = null;
+        FxVer? highestVersion = null;
+
+        foreach (var dir in allHostFxrDirs.EnumerateDirectories())
+        {
+            var version = FxVer.Parse(dir.Name);
+            if (highestVersion == null || version > highestVersion)
+            {
+                highestVersion = version;
+                hostFxrDirectory = dir;
+            }
+        }
 
         if (hostFxrDirectory is null)
         {
